@@ -31,6 +31,53 @@ func (c *WSClient) WriteJSON(v interface{}) error {
 	return c.conn.WriteJSON(v)
 }
 
+// extractSDP robustly parses SDP strings or objects from any field in Message
+func extractSDP(msg Message) string {
+	var strSDP string
+
+	// 1. Check msg.SDP
+	if len(msg.SDP) > 0 {
+		if err := json.Unmarshal(msg.SDP, &strSDP); err == nil && len(strSDP) > 0 {
+			return strSDP
+		}
+		var objSDP struct {
+			SDP  string `json:"sdp"`
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(msg.SDP, &objSDP); err == nil && len(objSDP.SDP) > 0 {
+			return objSDP.SDP
+		}
+	}
+
+	// 2. Check msg.Payload
+	if len(msg.Payload) > 0 {
+		if err := json.Unmarshal(msg.Payload, &strSDP); err == nil && len(strSDP) > 0 {
+			return strSDP
+		}
+		var objPayload struct {
+			SDP  interface{} `json:"sdp"`
+			Type string      `json:"type"`
+		}
+		if err := json.Unmarshal(msg.Payload, &objPayload); err == nil {
+			if s, ok := objPayload.SDP.(string); ok && len(s) > 0 {
+				return s
+			}
+			if nested, ok := objPayload.SDP.(map[string]interface{}); ok {
+				if s, ok := nested["sdp"].(string); ok && len(s) > 0 {
+					return s
+				}
+			}
+		}
+	}
+
+	// 3. Check msg.Text
+	if len(msg.Text) > 0 {
+		return msg.Text
+	}
+
+	return ""
+}
+
 // HandleSFUWebSocket upgrades the HTTP connection and runs the SFU signaling session.
 func HandleSFUWebSocket(manager *SFUManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -116,29 +163,15 @@ func HandleSFUWebSocket(manager *SFUManager) gin.HandlerFunc {
 
 			switch msg.Type {
 			case "offer":
-				var sdpPayload SDPPayload
-				if err := json.Unmarshal(msg.SDP, &sdpPayload); err != nil || sdpPayload.SDP == "" {
-					var rawSDP webrtc.SessionDescription
-					if err2 := json.Unmarshal(msg.SDP, &rawSDP); err2 == nil && rawSDP.SDP != "" {
-						sdpPayload.Type = "offer"
-						sdpPayload.SDP = rawSDP.SDP
-					}
-				}
-
-				if sdpPayload.SDP == "" {
+				sdpStr := extractSDP(msg)
+				if sdpStr == "" {
+					log.Printf("[SFU WS] Received empty SDP offer from %s", userID)
 					continue
 				}
 
 				offerDesc := webrtc.SessionDescription{
 					Type: webrtc.SDPTypeOffer,
-					SDP:  sdpPayload.SDP,
-				}
-
-				// If in have-local-offer state (glare), rollback local offer to accept client offer
-				if peer.PC.SignalingState() == webrtc.SignalingStateHaveLocalOffer {
-					_ = peer.PC.SetLocalDescription(webrtc.SessionDescription{
-						Type: webrtc.SDPTypeRollback,
-					})
+					SDP:  sdpStr,
 				}
 
 				if err := peer.PC.SetRemoteDescription(offerDesc); err != nil {
@@ -176,28 +209,23 @@ func HandleSFUWebSocket(manager *SFUManager) gin.HandlerFunc {
 				peer.CheckAndRunPendingRenegotiation(roomID)
 
 			case "answer":
-				var sdpPayload SDPPayload
-				if err := json.Unmarshal(msg.SDP, &sdpPayload); err != nil || sdpPayload.SDP == "" {
-					var rawSDP webrtc.SessionDescription
-					if err2 := json.Unmarshal(msg.SDP, &rawSDP); err2 == nil && rawSDP.SDP != "" {
-						sdpPayload.Type = "answer"
-						sdpPayload.SDP = rawSDP.SDP
-					}
+				sdpStr := extractSDP(msg)
+				if sdpStr == "" {
+					log.Printf("[SFU WS] Received empty SDP answer from %s", userID)
+					continue
 				}
 
-				if sdpPayload.SDP != "" {
-					if peer.PC.SignalingState() == webrtc.SignalingStateHaveLocalOffer {
-						answerDesc := webrtc.SessionDescription{
-							Type: webrtc.SDPTypeAnswer,
-							SDP:  sdpPayload.SDP,
-						}
-						if err := peer.PC.SetRemoteDescription(answerDesc); err != nil {
-							log.Printf("[SFU WS] SetRemoteDescription answer error for %s: %v", userID, err)
-						} else {
-							peer.DrainPendingCandidates()
-							// Trigger pending renegotiation if any was queued while waiting for this answer
-							peer.CheckAndRunPendingRenegotiation(roomID)
-						}
+				if peer.PC.SignalingState() == webrtc.SignalingStateHaveLocalOffer {
+					answerDesc := webrtc.SessionDescription{
+						Type: webrtc.SDPTypeAnswer,
+						SDP:  sdpStr,
+					}
+					if err := peer.PC.SetRemoteDescription(answerDesc); err != nil {
+						log.Printf("[SFU WS] SetRemoteDescription answer error for %s: %v", userID, err)
+					} else {
+						peer.DrainPendingCandidates()
+						// Trigger pending renegotiation if any was queued while waiting for this answer
+						peer.CheckAndRunPendingRenegotiation(roomID)
 					}
 				}
 

@@ -120,7 +120,7 @@ func (p *Peer) ScheduleRenegotiation(roomID string) {
 		p.renegTimer.Stop()
 	}
 
-	p.renegTimer = time.AfterFunc(200*time.Millisecond, func() {
+	p.renegTimer = time.AfterFunc(500*time.Millisecond, func() {
 		p.renegMu.Lock()
 		defer p.renegMu.Unlock()
 

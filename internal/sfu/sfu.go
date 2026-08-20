@@ -220,10 +220,6 @@ func getRTCConfiguration() webrtc.Configuration {
 		{
 			URLs: []string{
 				"stun:stun.l.google.com:19302",
-				"stun:stun1.l.google.com:19302",
-				"stun:stun2.l.google.com:19302",
-				"stun:stun3.l.google.com:19302",
-				"stun:stun4.l.google.com:19302",
 				"stun:stun.cloudflare.com:3478",
 			},
 		},
@@ -266,11 +262,10 @@ func getRTCConfiguration() webrtc.Configuration {
 	}
 
 	return webrtc.Configuration{
-		ICEServers:           iceServers,
-		ICETransportPolicy:   webrtc.ICETransportPolicyAll,
-		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
-		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
-		ICECandidatePoolSize: 10,
+		ICEServers:         iceServers,
+		ICETransportPolicy: webrtc.ICETransportPolicyAll,
+		BundlePolicy:       webrtc.BundlePolicyMaxBundle,
+		RTCPMuxPolicy:      webrtc.RTCPMuxPolicyRequire,
 	}
 }
 

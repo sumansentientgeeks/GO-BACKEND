@@ -1,6 +1,6 @@
 module example/hello
 
-go 1.26.6
+go 1.22.0
 
 require (
 	github.com/gin-contrib/cors v1.7.7

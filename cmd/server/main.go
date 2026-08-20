@@ -266,6 +266,7 @@ func newRouter() *gin.Engine {
 // @host localhost:8080
 // @BasePath /
 func main() {
+	log.Println("=== APPLICATION STARTING ===")
 	config.Load()
 	r := newRouter()
 	
@@ -274,8 +275,8 @@ func main() {
 		port = "8080"
 	}
 	
-	log.Printf("Starting Teams WebRTC SFU Server on :%s...", port)
-	if err := r.Run(":" + port); err != nil {
+	log.Printf("Starting Teams WebRTC SFU Server on 0.0.0.0:%s...", port)
+	if err := r.Run("0.0.0.0:" + port); err != nil {
 		log.Fatal(err)
 	}
 }

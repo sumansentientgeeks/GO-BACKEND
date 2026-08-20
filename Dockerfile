@@ -31,4 +31,4 @@ EXPOSE 8080
 # EXPOSE 50000-50050/udp
 
 # Command to run the executable
-CMD ["./server"]
+CMD ["/app/server"]

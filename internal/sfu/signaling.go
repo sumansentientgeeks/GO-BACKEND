@@ -118,6 +118,17 @@ func HandleSFUWebSocket(manager *SFUManager) gin.HandlerFunc {
 
 		room := manager.GetOrCreateRoom(roomID)
 
+		// Prepare initial joined payload with full metadata
+		joinedPayload, _ := json.Marshal(map[string]interface{}{
+			"user_id":           userID,
+			"user_name":         userName,
+			"role":              role,
+			"is_audio_muted":    peer.IsAudioMuted,
+			"is_video_muted":    peer.IsVideoMuted,
+			"is_screen_sharing": peer.IsScreenSharing,
+			"is_hand_raised":    peer.IsHandRaised,
+		})
+
 		// Notify existing peers that a new participant joined
 		room.BroadcastExcept(userID, Message{
 			Type:     "peer_joined",
@@ -125,6 +136,7 @@ func HandleSFUWebSocket(manager *SFUManager) gin.HandlerFunc {
 			UserID:   userID,
 			UserName: userName,
 			Role:     role,
+			Payload:  joinedPayload,
 		})
 
 		// Send initial room state & recording status back to this user
@@ -305,9 +317,11 @@ func HandleSFUWebSocket(manager *SFUManager) gin.HandlerFunc {
 					} else if state.IsScreenSharingSnake != nil {
 						peer.IsScreenSharing = *state.IsScreenSharingSnake
 					}
+					isVideoActive := !peer.IsVideoMuted || peer.IsScreenSharing
 					peer.mu.Unlock()
 
-					if peer.IsScreenSharing && peer.PC != nil {
+					// When video or screen sharing is enabled, send immediate PLI to ensure keyframes are sent
+					if isVideoActive && peer.PC != nil {
 						for _, receiver := range peer.PC.GetReceivers() {
 							if receiver.Track() != nil && receiver.Track().Kind() == webrtc.RTPCodecTypeVideo {
 								_ = peer.PC.WriteRTCP([]rtcp.Packet{

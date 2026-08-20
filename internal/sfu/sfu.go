@@ -5,6 +5,9 @@ import (
 	"errors"
 	"io"
 	"log"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -120,7 +123,7 @@ func (p *Peer) ScheduleRenegotiation(roomID string) {
 		p.renegTimer.Stop()
 	}
 
-	p.renegTimer = time.AfterFunc(500*time.Millisecond, func() {
+	p.renegTimer = time.AfterFunc(300*time.Millisecond, func() {
 		p.renegMu.Lock()
 		defer p.renegMu.Unlock()
 
@@ -192,6 +195,7 @@ type SFUManager struct {
 	Rooms       map[string]*SFURoom
 	MediaEngine *webrtc.MediaEngine
 	API         *webrtc.API
+	RTCConfig   webrtc.Configuration
 	JoinQueue   chan joinTask
 	mu          sync.RWMutex
 }
@@ -210,7 +214,67 @@ type peerResult struct {
 	err  error
 }
 
-// NewSFUManager initializes WebRTC media codecs, interceptors, worker pools for 100+ joins/sec, and SFU engine.
+// getRTCConfiguration builds the WebRTC STUN & TURN config supporting cloud NAT environments.
+func getRTCConfiguration() webrtc.Configuration {
+	iceServers := []webrtc.ICEServer{
+		{
+			URLs: []string{
+				"stun:stun.l.google.com:19302",
+				"stun:stun1.l.google.com:19302",
+				"stun:stun2.l.google.com:19302",
+				"stun:stun3.l.google.com:19302",
+				"stun:stun4.l.google.com:19302",
+				"stun:stun.cloudflare.com:3478",
+			},
+		},
+	}
+
+	// Support custom TURN server from environment variables
+	turnURL := os.Getenv("TURN_SERVER_URL")
+	if turnURL == "" {
+		turnURL = os.Getenv("TURN_URL")
+	}
+	turnUser := os.Getenv("TURN_USERNAME")
+	turnCred := os.Getenv("TURN_CREDENTIAL")
+	if turnCred == "" {
+		turnCred = os.Getenv("TURN_PASSWORD")
+	}
+
+	if turnURL != "" {
+		urls := strings.Split(turnURL, ",")
+		for i := range urls {
+			urls[i] = strings.TrimSpace(urls[i])
+		}
+		iceServers = append(iceServers, webrtc.ICEServer{
+			URLs:           urls,
+			Username:       turnUser,
+			Credential:     turnCred,
+			CredentialType: webrtc.ICECredentialTypePassword,
+		})
+	} else {
+		// Fallback open TURN servers matching frontend for reliable symmetric NAT traversal
+		iceServers = append(iceServers, webrtc.ICEServer{
+			URLs: []string{
+				"turn:openrelay.metered.ca:80",
+				"turn:openrelay.metered.ca:443",
+				"turn:openrelay.metered.ca:443?transport=tcp",
+			},
+			Username:       "openrelayproject",
+			Credential:     "openrelayproject",
+			CredentialType: webrtc.ICECredentialTypePassword,
+		})
+	}
+
+	return webrtc.Configuration{
+		ICEServers:           iceServers,
+		ICETransportPolicy:   webrtc.ICETransportPolicyAll,
+		BundlePolicy:         webrtc.BundlePolicyMaxBundle,
+		RTCPMuxPolicy:        webrtc.RTCPMuxPolicyRequire,
+		ICECandidatePoolSize: 10,
+	}
+}
+
+// NewSFUManager initializes WebRTC media codecs, interceptors, setting engine, and SFU engine.
 func NewSFUManager() (*SFUManager, error) {
 	m := &webrtc.MediaEngine{}
 	if err := m.RegisterDefaultCodecs(); err != nil {
@@ -222,16 +286,49 @@ func NewSFUManager() (*SFUManager, error) {
 		return nil, err
 	}
 
-	api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(ir))
+	se := webrtc.SettingEngine{}
+
+	// Configure NAT 1:1 Public IP if deployed behind cloud NAT/Docker/VPS
+	natIP := os.Getenv("NAT_1TO1_IP")
+	if natIP == "" {
+		natIP = os.Getenv("PUBLIC_IP")
+	}
+	if natIP != "" {
+		log.Printf("[SFU] Configuring NAT 1:1 IP: %s", natIP)
+		se.SetNAT1To1IPs([]string{natIP}, webrtc.ICECandidateTypeHost)
+	}
+
+	// Configure UDP Port range if specified
+	minPortStr := os.Getenv("UDP_PORT_MIN")
+	maxPortStr := os.Getenv("UDP_PORT_MAX")
+	if minPortStr != "" && maxPortStr != "" {
+		minPort, err1 := strconv.ParseUint(minPortStr, 10, 16)
+		maxPort, err2 := strconv.ParseUint(maxPortStr, 10, 16)
+		if err1 == nil && err2 == nil && minPort < maxPort {
+			log.Printf("[SFU] Configuring Ephemeral UDP Port Range: %d - %d", minPort, maxPort)
+			if err := se.SetEphemeralUDPPortRange(uint16(minPort), uint16(maxPort)); err != nil {
+				log.Printf("[SFU] Warning: failed to set UDP port range: %v", err)
+			}
+		}
+	}
+
+	se.SetICETimeouts(3*time.Second, 6*time.Second, 12*time.Second)
+
+	api := webrtc.NewAPI(
+		webrtc.WithMediaEngine(m),
+		webrtc.WithInterceptorRegistry(ir),
+		webrtc.WithSettingEngine(se),
+	)
 
 	sfu := &SFUManager{
 		Rooms:       make(map[string]*SFURoom),
 		MediaEngine: m,
 		API:         api,
-		JoinQueue:   make(chan joinTask, 10000), // Buffered channel to absorb high-concurrency bursts
+		RTCConfig:   getRTCConfiguration(),
+		JoinQueue:   make(chan joinTask, 10000),
 	}
 
-	// Start 16 background workers for processing concurrent joins without locking
+	// Start 16 background workers for processing concurrent joins
 	for i := 0; i < 16; i++ {
 		go sfu.joinWorker()
 	}
@@ -281,21 +378,6 @@ func (s *SFUManager) RemoveRoomIfEmpty(roomID string) {
 	}
 }
 
-// WebRTC Configuration with optimized STUN timeouts
-var defaultRTCConfig = webrtc.Configuration{
-	ICEServers: []webrtc.ICEServer{
-		{
-			URLs: []string{
-				"stun:stun.l.google.com:19302",
-				"stun:stun1.l.google.com:19302",
-				"stun:stun2.l.google.com:19302",
-				"stun:stun3.l.google.com:19302",
-				"stun:stun4.l.google.com:19302",
-			},
-		},
-	},
-}
-
 // CreatePeer dispatches peer creation via high-concurrency worker pool.
 func (s *SFUManager) CreatePeer(roomID, userID, userName, role string, sendMsg func(Message) error) (*Peer, error) {
 	resChan := make(chan peerResult, 1)
@@ -312,7 +394,7 @@ func (s *SFUManager) CreatePeer(roomID, userID, userName, role string, sendMsg f
 }
 
 func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, sendMsg func(Message) error) (*Peer, error) {
-	pc, err := s.API.NewPeerConnection(defaultRTCConfig)
+	pc, err := s.API.NewPeerConnection(s.RTCConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -377,7 +459,7 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 
 		// Add this new track to all other existing peers in the room
 		for id, otherPeer := range room.Peers {
-			if id != userID {
+			if id != userID && otherPeer.PC != nil && otherPeer.PC.ConnectionState() != webrtc.PeerConnectionStateClosed {
 				if _, err := otherPeer.PC.AddTrack(localTrack); err != nil {
 					log.Printf("[SFU] Error adding track %s to peer %s: %v", localTrack.ID(), otherPeer.ID, err)
 				} else {
@@ -390,6 +472,11 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 
 		// Request periodic PLI keyframes for video tracks so subscribers render cleanly
 		if remoteTrack.Kind() == webrtc.RTPCodecTypeVideo {
+			// Trigger immediate PLI
+			_ = pc.WriteRTCP([]rtcp.Packet{
+				&rtcp.PictureLossIndication{MediaSSRC: uint32(remoteTrack.SSRC())},
+			})
+
 			go func() {
 				ticker := time.NewTicker(2 * time.Second)
 				defer ticker.Stop()
@@ -405,6 +492,8 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 		}
 
 		// Read RTP packets from remoteTrack and fan out to localTrack
+		// CRITICAL FIX: Do not terminate on writeErr (e.g. io.ErrClosedPipe when 0 subscribers exist)
+		// Only terminate when the publisher stream itself is closed (io.EOF or read error).
 		go func() {
 			for {
 				pkt, _, readErr := remoteTrack.ReadRTP()
@@ -414,11 +503,8 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 					}
 					return
 				}
-				if writeErr := localTrack.WriteRTP(pkt); writeErr != nil {
-					if errors.Is(writeErr, io.ErrClosedPipe) {
-						return
-					}
-				}
+				// Write packet to subscribers (if no subscribers yet, this will safely return an error without killing our read loop)
+				_ = localTrack.WriteRTP(pkt)
 			}
 		}()
 	})
@@ -428,11 +514,21 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 	hasExistingTracks := false
 	for trackID, existingTrack := range room.Tracks {
 		ownerID := room.TrackOwners[trackID]
-		if ownerID != userID {
+		if ownerID != userID && existingTrack != nil {
 			if _, err := pc.AddTrack(existingTrack); err != nil {
 				log.Printf("[SFU] Error subscribing peer %s to existing track %s: %v", userID, trackID, err)
 			} else {
 				hasExistingTracks = true
+				// Request immediate PLI from the publisher of this track
+				if ownerPeer, ok := room.Peers[ownerID]; ok && ownerPeer.PC != nil {
+					for _, receiver := range ownerPeer.PC.GetReceivers() {
+						if receiver.Track() != nil && receiver.Track().Kind() == webrtc.RTPCodecTypeVideo {
+							_ = ownerPeer.PC.WriteRTCP([]rtcp.Packet{
+								&rtcp.PictureLossIndication{MediaSSRC: uint32(receiver.Track().SSRC())},
+							})
+						}
+					}
+				}
 			}
 		}
 	}

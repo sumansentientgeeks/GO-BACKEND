@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.26-alpine AS builder
+FROM golang:1.26 AS builder
 
 WORKDIR /app
 
@@ -16,9 +16,9 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /app/server ./cmd/server
 
 # Final stage
-FROM alpine:latest
+FROM debian:bookworm-slim
 
-RUN apk --no-cache add ca-certificates
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

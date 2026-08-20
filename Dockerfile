@@ -8,7 +8,8 @@ RUN go mod download
 COPY . .
 
 RUN go build -o /app/server ./cmd/server
+RUN chmod +x /app/server /app/start.sh
 
 EXPOSE 8080
 
-CMD ["/app/server"]
+CMD ["/app/start.sh"]

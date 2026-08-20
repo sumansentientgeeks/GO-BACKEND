@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 
 	"github.com/gin-contrib/cors"
@@ -263,8 +265,17 @@ func newRouter() *gin.Engine {
 func main() {
 	config.Load()
 	r := newRouter()
-	log.Println("Starting Teams WebRTC SFU Server on :8080...")
-	if err := r.Run(":8080"); err != nil {
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	if !strings.HasPrefix(port, ":") {
+		port = ":" + port
+	}
+
+	log.Printf("Starting Teams WebRTC SFU Server on %s...", port)
+	if err := r.Run(port); err != nil {
 		log.Fatal(err)
 	}
 }

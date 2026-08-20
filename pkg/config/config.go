@@ -2,16 +2,20 @@ package config
 
 import (
 	"log"
+	"os"
 
 	"github.com/joho/godotenv"
 )
 
-// Load initializes the environment variables from a .env file
+// Load initializes the environment variables from a .env file if present, or uses system/Render environment variables.
 func Load() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Println("No .env file found or error loading it. Relying on system environment variables.")
+	if _, err := os.Stat(".env"); err == nil {
+		if err := godotenv.Load(); err != nil {
+			log.Printf("[Config] Warning loading .env: %v (using system environment)", err)
+		} else {
+			log.Println("[Config] Successfully loaded environment variables from .env")
+		}
 	} else {
-		log.Println("Environment variables loaded from .env file successfully.")
+		log.Println("[Config] Running with system/Render environment variables.")
 	}
 }

@@ -20,17 +20,33 @@ func NewLiveKitService() *LiveKitService {
 }
 
 func (s *LiveKitService) GenerateToken(roomName, identity, participantName string) (string, error) {
-	at := auth.NewAccessToken(s.apiKey, s.apiSecret)
-	
-	grant := &auth.VideoGrant{
-		RoomJoin: true,
-		Room:     roomName,
+	apiKey := s.apiKey
+	if apiKey == "" {
+		apiKey = os.Getenv("LIVEKIT_API_KEY")
 	}
-	
+	apiSecret := s.apiSecret
+	if apiSecret == "" {
+		apiSecret = os.Getenv("LIVEKIT_API_SECRET")
+	}
+
+	at := auth.NewAccessToken(apiKey, apiSecret)
+
+	canPublish := true
+	canSubscribe := true
+	canPublishData := true
+
+	grant := &auth.VideoGrant{
+		RoomJoin:       true,
+		Room:           roomName,
+		CanPublish:     &canPublish,
+		CanSubscribe:   &canSubscribe,
+		CanPublishData: &canPublishData,
+	}
+
 	at.AddGrant(grant).
 		SetIdentity(identity).
 		SetName(participantName).
-		SetValidFor(time.Hour)
+		SetValidFor(24 * time.Hour)
 
 	return at.ToJWT()
 }

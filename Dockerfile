@@ -3,32 +3,26 @@ FROM golang:1.26 AS builder
 
 WORKDIR /app
 
-# Copy go mod and sum files
 COPY go.mod go.sum ./
-
-# Download dependencies
 RUN go mod download
 
-# Copy the source code
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o /app/server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -o /app/server ./cmd/server
 
-# Final stage
+
+# Runtime stage
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy the binary from the build stage
-COPY --from=builder /app/server .
+COPY --from=builder /app/server /app/server
 
-# Expose the port the app runs on (adjust if your Go app uses a different HTTP port)
 EXPOSE 8080
-# WebRTC UDP ports (Pion default is often dynamic, but if you bind to specific ports, expose them here)
-# EXPOSE 50000-50050/udp
 
-# Command to run the executable
 CMD ["/app/server"]

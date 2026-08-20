@@ -22,7 +22,6 @@ import (
 
 	"example/hello/internal/api/room"
 	"example/hello/internal/api/user"
-	"example/hello/internal/middleware"
 	"example/hello/internal/repository"
 	"example/hello/internal/service"
 	"example/hello/internal/sfu"
@@ -176,9 +175,7 @@ func newRouter() *gin.Engine {
 	callHandler := room.NewCallHandler(livekitService)
 
 	// Room API
-	authRoutes := r.Group("/api/rooms")
-	authRoutes.Use(middleware.AuthMiddleware())
-	authRoutes.GET("/:id/call-token", callHandler.GetJoinToken)
+	r.GET("/api/rooms/:id/call-token", callHandler.GetJoinToken)
 
 	r.POST("/api/rooms/create", func(c *gin.Context) {
 		var payload struct {

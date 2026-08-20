@@ -3,9 +3,12 @@ package room
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
-
+	"github.com/golang-jwt/jwt/v5"
 
 	"example/hello/internal/service"
 )
@@ -26,10 +29,11 @@ func NewCallHandler(livekitService *service.LiveKitService) *CallHandler {
 // @Tags rooms
 // @Produce  json
 // @Param id path string true "Room ID"
-// @Param Authorization header string true "Bearer {token}"
+// @Param user_id query string false "User ID"
+// @Param user_name query string false "User Name"
+// @Param Authorization header string false "Bearer {token}"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]interface{}
-// @Failure 401 {object} map[string]interface{}
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/rooms/{id}/call-token [get]
 func (h *CallHandler) GetJoinToken(c *gin.Context) {
@@ -39,14 +43,36 @@ func (h *CallHandler) GetJoinToken(c *gin.Context) {
 		return
 	}
 
-	// Assuming auth_middleware sets "user_id" in context
+	// 1. Check if user_id was set by auth middleware
 	userID, exists := c.Get("user_id")
-	if !exists {
-		// Fallback to query param if auth middleware is not used for this endpoint yet
+	if !exists || userID == "" {
+		// 2. Check Authorization header manually if provided
+		authHeader := c.GetHeader("Authorization")
+		if authHeader != "" {
+			parts := strings.Split(authHeader, " ")
+			if len(parts) == 2 && parts[0] == "Bearer" {
+				secret := os.Getenv("JWT_SECRET")
+				if secret == "" {
+					secret = "super_secret_default_key"
+				}
+				token, err := jwt.Parse(parts[1], func(token *jwt.Token) (interface{}, error) {
+					return []byte(secret), nil
+				})
+				if err == nil && token.Valid {
+					if claims, ok := token.Claims.(jwt.MapClaims); ok {
+						userID = claims["user_id"]
+						exists = true
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Fallback to query param or generate guest ID
+	if !exists || userID == "" {
 		userID = c.Query("user_id")
 		if userID == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "user id is required"})
-			return
+			userID = fmt.Sprintf("guest_%d", time.Now().UnixMilli())
 		}
 	}
 
@@ -55,17 +81,19 @@ func (h *CallHandler) GetJoinToken(c *gin.Context) {
 	case string:
 		identity = v
 	case float64:
-		// jwt.MapClaims unmarshals numbers as float64
 		identity = fmt.Sprintf("%.0f", v)
 	default:
 		identity = fmt.Sprintf("%v", v)
 	}
 
-	participantName := "User " + identity // Or fetch from DB
+	userName := c.Query("user_name")
+	if userName == "" {
+		userName = "User " + identity
+	}
 
-	token, err := h.livekitService.GenerateToken(roomID, identity, participantName)
+	token, err := h.livekitService.GenerateToken(roomID, identity, userName)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token: " + err.Error()})
 		return
 	}
 

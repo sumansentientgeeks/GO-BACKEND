@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS messages;
+DROP TABLE IF EXISTS room_participants;
+DROP TABLE IF EXISTS rooms;
+DROP TABLE IF EXISTS users;

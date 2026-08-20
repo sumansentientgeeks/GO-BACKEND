@@ -487,16 +487,22 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 		}
 
 		// Read RTP packets from remoteTrack and fan out to localTrack
-		// CRITICAL FIX: Do not terminate on writeErr (e.g. io.ErrClosedPipe when 0 subscribers exist)
+		// CRITICAL: Do not terminate on writeErr (e.g. io.ErrClosedPipe when 0 subscribers exist)
 		// Only terminate when the publisher stream itself is closed (io.EOF or read error).
 		go func() {
+			var packetCount uint64
 			for {
 				pkt, _, readErr := remoteTrack.ReadRTP()
 				if readErr != nil {
 					if errors.Is(readErr, io.EOF) {
+						log.Printf("[SFU] Stream closed (EOF) for track %s (%s) from %s", remoteTrack.ID(), remoteTrack.Kind().String(), userID)
 						return
 					}
 					return
+				}
+				packetCount++
+				if packetCount == 1 || packetCount%1000 == 0 {
+					log.Printf("[SFU] Forwarding RTP track %s (%s) packet #%d from %s", remoteTrack.ID(), remoteTrack.Kind().String(), packetCount, userID)
 				}
 				// Write packet to subscribers (if no subscribers yet, this will safely return an error without killing our read loop)
 				_ = localTrack.WriteRTP(pkt)

@@ -162,6 +162,9 @@ func HandleSFUWebSocket(manager *SFUManager) gin.HandlerFunc {
 					SDP:    answerPayload,
 				})
 
+				// Trigger pending renegotiation if needed
+				peer.CheckAndRunPendingRenegotiation(roomID)
+
 			case "answer":
 				var sdpPayload SDPPayload
 				if err := json.Unmarshal(msg.SDP, &sdpPayload); err != nil || sdpPayload.SDP == "" {
@@ -226,26 +229,51 @@ func HandleSFUWebSocket(manager *SFUManager) gin.HandlerFunc {
 				room.BroadcastAll(msg)
 
 			case "media_state":
-				if msg.Payload != nil {
-					var state struct {
-						IsAudioMuted    bool `json:"isAudioMuted"`
-						IsVideoMuted    bool `json:"isVideoMuted"`
-						IsScreenSharing bool `json:"isScreenSharing"`
+				rawState := msg.Payload
+				if len(rawState) == 0 {
+					rawState, _ = json.Marshal(msg)
+				}
+				var state struct {
+					IsAudioMuted         *bool `json:"isAudioMuted"`
+					IsVideoMuted         *bool `json:"isVideoMuted"`
+					IsScreenSharing      *bool `json:"isScreenSharing"`
+					IsAudioMutedSnake    *bool `json:"is_audio_muted"`
+					IsVideoMutedSnake    *bool `json:"is_video_muted"`
+					IsScreenSharingSnake *bool `json:"is_screen_sharing"`
+					AudioMuted           *bool `json:"audioMuted"`
+					VideoMuted           *bool `json:"videoMuted"`
+				}
+				if err := json.Unmarshal(rawState, &state); err == nil {
+					peer.mu.Lock()
+					if state.IsAudioMuted != nil {
+						peer.IsAudioMuted = *state.IsAudioMuted
+					} else if state.IsAudioMutedSnake != nil {
+						peer.IsAudioMuted = *state.IsAudioMutedSnake
+					} else if state.AudioMuted != nil {
+						peer.IsAudioMuted = *state.AudioMuted
 					}
-					if err := json.Unmarshal(msg.Payload, &state); err == nil {
-						peer.mu.Lock()
-						peer.IsAudioMuted = state.IsAudioMuted
-						peer.IsVideoMuted = state.IsVideoMuted
-						peer.IsScreenSharing = state.IsScreenSharing
-						peer.mu.Unlock()
 
-						if state.IsScreenSharing && peer.PC != nil {
-							for _, receiver := range peer.PC.GetReceivers() {
-								if receiver.Track() != nil && receiver.Track().Kind() == webrtc.RTPCodecTypeVideo {
-									_ = peer.PC.WriteRTCP([]rtcp.Packet{
-										&rtcp.PictureLossIndication{MediaSSRC: uint32(receiver.Track().SSRC())},
-									})
-								}
+					if state.IsVideoMuted != nil {
+						peer.IsVideoMuted = *state.IsVideoMuted
+					} else if state.IsVideoMutedSnake != nil {
+						peer.IsVideoMuted = *state.IsVideoMutedSnake
+					} else if state.VideoMuted != nil {
+						peer.IsVideoMuted = *state.VideoMuted
+					}
+
+					if state.IsScreenSharing != nil {
+						peer.IsScreenSharing = *state.IsScreenSharing
+					} else if state.IsScreenSharingSnake != nil {
+						peer.IsScreenSharing = *state.IsScreenSharingSnake
+					}
+					peer.mu.Unlock()
+
+					if peer.IsScreenSharing && peer.PC != nil {
+						for _, receiver := range peer.PC.GetReceivers() {
+							if receiver.Track() != nil && receiver.Track().Kind() == webrtc.RTPCodecTypeVideo {
+								_ = peer.PC.WriteRTCP([]rtcp.Packet{
+									&rtcp.PictureLossIndication{MediaSSRC: uint32(receiver.Track().SSRC())},
+								})
 							}
 						}
 					}

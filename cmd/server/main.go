@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"os"
 	"sync"
 
 	"github.com/gin-contrib/cors"
@@ -155,10 +154,6 @@ func newRouter() *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "teams-sfu-backend"})
 	})
 
-	r.GET("/", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "Server is running"})
-	})
-
 	// Swagger Route
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
@@ -266,17 +261,10 @@ func newRouter() *gin.Engine {
 // @host localhost:8080
 // @BasePath /
 func main() {
-	log.Println("=== APPLICATION STARTING ===")
 	config.Load()
 	r := newRouter()
-	
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-	
-	log.Printf("Starting Teams WebRTC SFU Server on 0.0.0.0:%s...", port)
-	if err := r.Run("0.0.0.0:" + port); err != nil {
+	log.Println("Starting Teams WebRTC SFU Server on :8080...")
+	if err := r.Run(":8080"); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pion/interceptor"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 )
@@ -170,14 +171,19 @@ type peerResult struct {
 	err  error
 }
 
-// NewSFUManager initializes WebRTC media codecs, worker pools for 100+ joins/sec, and SFU engine.
+// NewSFUManager initializes WebRTC media codecs, interceptors, worker pools for 100+ joins/sec, and SFU engine.
 func NewSFUManager() (*SFUManager, error) {
 	m := &webrtc.MediaEngine{}
 	if err := m.RegisterDefaultCodecs(); err != nil {
 		return nil, err
 	}
 
-	api := webrtc.NewAPI(webrtc.WithMediaEngine(m))
+	ir := &interceptor.Registry{}
+	if err := webrtc.RegisterDefaultInterceptors(m, ir); err != nil {
+		return nil, err
+	}
+
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(ir))
 
 	sfu := &SFUManager{
 		Rooms:       make(map[string]*SFURoom),
@@ -281,8 +287,8 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 		PC:           pc,
 		SendMsg:      sendMsg,
 		Tracks:       make(map[string]*webrtc.TrackLocalStaticRTP),
-		IsAudioMuted: true,
-		IsVideoMuted: true,
+		IsAudioMuted: false,
+		IsVideoMuted: false,
 	}
 
 	room := s.GetOrCreateRoom(roomID)
@@ -302,6 +308,11 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 			UserID:    userID,
 			Candidate: cJSON,
 		})
+	})
+
+	// Automatically schedule renegotiation when negotiation is needed
+	pc.OnNegotiationNeeded(func() {
+		peer.ScheduleRenegotiation(roomID)
 	})
 
 	// Handle incoming published tracks from this peer
@@ -358,16 +369,15 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 
 		// Read RTP packets from remoteTrack and fan out to localTrack
 		go func() {
-			buf := make([]byte, 1500)
 			for {
-				n, _, readErr := remoteTrack.Read(buf)
+				pkt, _, readErr := remoteTrack.ReadRTP()
 				if readErr != nil {
 					if errors.Is(readErr, io.EOF) {
 						return
 					}
 					return
 				}
-				if _, writeErr := localTrack.Write(buf[:n]); writeErr != nil {
+				if writeErr := localTrack.WriteRTP(pkt); writeErr != nil {
 					if errors.Is(writeErr, io.ErrClosedPipe) {
 						return
 					}
@@ -378,16 +388,23 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 
 	// Add peer to room and subscribe them to existing room tracks
 	room.mu.Lock()
+	hasExistingTracks := false
 	for trackID, existingTrack := range room.Tracks {
 		ownerID := room.TrackOwners[trackID]
 		if ownerID != userID {
 			if _, err := pc.AddTrack(existingTrack); err != nil {
 				log.Printf("[SFU] Error subscribing peer %s to existing track %s: %v", userID, trackID, err)
+			} else {
+				hasExistingTracks = true
 			}
 		}
 	}
 	room.Peers[userID] = peer
 	room.mu.Unlock()
+
+	if hasExistingTracks {
+		peer.ScheduleRenegotiation(roomID)
+	}
 
 	return peer, nil
 }

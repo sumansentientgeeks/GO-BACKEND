@@ -155,6 +155,10 @@ func newRouter() *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "teams-sfu-backend"})
 	})
 
+	r.GET("/", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "Server is running"})
+	})
+
 	// Swagger Route
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 

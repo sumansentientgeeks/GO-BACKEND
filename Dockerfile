@@ -22,7 +22,8 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY --from=builder /app/server /app/server
+RUN chmod +x /app/server
 
 EXPOSE 8080
 
-CMD ["/app/server"]
+ENTRYPOINT ["/app/server"]

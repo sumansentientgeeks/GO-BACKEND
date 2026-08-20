@@ -134,10 +134,20 @@ func HandleSFUWebSocket(manager *SFUManager) gin.HandlerFunc {
 					SDP:  sdpPayload.SDP,
 				}
 
+				// If in have-local-offer state (glare), rollback local offer to accept client offer
+				if peer.PC.SignalingState() == webrtc.SignalingStateHaveLocalOffer {
+					_ = peer.PC.SetLocalDescription(webrtc.SessionDescription{
+						Type: webrtc.SDPTypeRollback,
+					})
+				}
+
 				if err := peer.PC.SetRemoteDescription(offerDesc); err != nil {
 					log.Printf("[SFU WS] SetRemoteDescription offer error for %s: %v", userID, err)
 					continue
 				}
+
+				// Flush buffered ICE candidates once remote description is set
+				peer.DrainPendingCandidates()
 
 				answer, err := peer.PC.CreateAnswer(nil)
 				if err != nil {
@@ -176,15 +186,18 @@ func HandleSFUWebSocket(manager *SFUManager) gin.HandlerFunc {
 				}
 
 				if sdpPayload.SDP != "" {
-					answerDesc := webrtc.SessionDescription{
-						Type: webrtc.SDPTypeAnswer,
-						SDP:  sdpPayload.SDP,
-					}
-					if err := peer.PC.SetRemoteDescription(answerDesc); err != nil {
-						log.Printf("[SFU WS] SetRemoteDescription answer error for %s: %v", userID, err)
-					} else {
-						// Trigger pending renegotiation if any was queued while waiting for this answer
-						peer.CheckAndRunPendingRenegotiation(roomID)
+					if peer.PC.SignalingState() == webrtc.SignalingStateHaveLocalOffer {
+						answerDesc := webrtc.SessionDescription{
+							Type: webrtc.SDPTypeAnswer,
+							SDP:  sdpPayload.SDP,
+						}
+						if err := peer.PC.SetRemoteDescription(answerDesc); err != nil {
+							log.Printf("[SFU WS] SetRemoteDescription answer error for %s: %v", userID, err)
+						} else {
+							peer.DrainPendingCandidates()
+							// Trigger pending renegotiation if any was queued while waiting for this answer
+							peer.CheckAndRunPendingRenegotiation(roomID)
+						}
 					}
 				}
 
@@ -193,9 +206,7 @@ func HandleSFUWebSocket(manager *SFUManager) gin.HandlerFunc {
 				if err := json.Unmarshal(msg.Candidate, &init); err != nil {
 					continue
 				}
-				if err := peer.PC.AddICECandidate(init); err != nil {
-					log.Printf("[SFU WS] AddICECandidate error for %s: %v", userID, err)
-				}
+				peer.AddCandidate(init)
 
 			case "chat_message":
 				msg.RoomID = roomID

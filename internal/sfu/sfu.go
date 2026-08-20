@@ -62,10 +62,49 @@ type Peer struct {
 	IsHandRaised    bool
 	IsScreenSharing bool
 
+	pendingCandidates []webrtc.ICECandidateInit
+	candidatesMu      sync.Mutex
+
 	renegMu      sync.Mutex
 	renegPending bool
 	renegTimer   *time.Timer
 	mu           sync.RWMutex
+}
+
+// AddCandidate buffers or adds an ICE candidate safely
+func (p *Peer) AddCandidate(candidate webrtc.ICECandidateInit) {
+	p.candidatesMu.Lock()
+	defer p.candidatesMu.Unlock()
+
+	if p.PC == nil || p.PC.ConnectionState() == webrtc.PeerConnectionStateClosed {
+		return
+	}
+
+	if p.PC.RemoteDescription() == nil {
+		p.pendingCandidates = append(p.pendingCandidates, candidate)
+		return
+	}
+
+	if err := p.PC.AddICECandidate(candidate); err != nil {
+		log.Printf("[SFU WS] AddICECandidate error for %s: %v", p.ID, err)
+	}
+}
+
+// DrainPendingCandidates flushes all queued ICE candidates once remote description is set
+func (p *Peer) DrainPendingCandidates() {
+	p.candidatesMu.Lock()
+	defer p.candidatesMu.Unlock()
+
+	if p.PC == nil || p.PC.RemoteDescription() == nil {
+		return
+	}
+
+	for _, cand := range p.pendingCandidates {
+		if err := p.PC.AddICECandidate(cand); err != nil {
+			log.Printf("[SFU WS] Drain AddICECandidate error for %s: %v", p.ID, err)
+		}
+	}
+	p.pendingCandidates = nil
 }
 
 // ScheduleRenegotiation triggers a debounced and state-safe SDP offer to the peer.
@@ -81,7 +120,7 @@ func (p *Peer) ScheduleRenegotiation(roomID string) {
 		p.renegTimer.Stop()
 	}
 
-	p.renegTimer = time.AfterFunc(100*time.Millisecond, func() {
+	p.renegTimer = time.AfterFunc(200*time.Millisecond, func() {
 		p.renegMu.Lock()
 		defer p.renegMu.Unlock()
 
@@ -90,7 +129,7 @@ func (p *Peer) ScheduleRenegotiation(roomID string) {
 		}
 
 		if p.PC.SignalingState() != webrtc.SignalingStateStable {
-			// Mark renegotiation as pending until the current in-flight answer is processed
+			// Mark renegotiation as pending until current state returns to stable
 			p.renegPending = true
 			return
 		}
@@ -249,6 +288,9 @@ var defaultRTCConfig = webrtc.Configuration{
 			URLs: []string{
 				"stun:stun.l.google.com:19302",
 				"stun:stun1.l.google.com:19302",
+				"stun:stun2.l.google.com:19302",
+				"stun:stun3.l.google.com:19302",
+				"stun:stun4.l.google.com:19302",
 			},
 		},
 	},
@@ -308,11 +350,6 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 			UserID:    userID,
 			Candidate: cJSON,
 		})
-	})
-
-	// Automatically schedule renegotiation when negotiation is needed
-	pc.OnNegotiationNeeded(func() {
-		peer.ScheduleRenegotiation(roomID)
 	})
 
 	// Handle incoming published tracks from this peer
@@ -403,7 +440,9 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 	room.mu.Unlock()
 
 	if hasExistingTracks {
-		peer.ScheduleRenegotiation(roomID)
+		peer.renegMu.Lock()
+		peer.renegPending = true
+		peer.renegMu.Unlock()
 	}
 
 	return peer, nil

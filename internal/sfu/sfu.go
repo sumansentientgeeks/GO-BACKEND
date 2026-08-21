@@ -264,7 +264,7 @@ func getRTCConfiguration() webrtc.Configuration {
 	return webrtc.Configuration{
 		ICEServers:         iceServers,
 		ICETransportPolicy: webrtc.ICETransportPolicyAll,
-		BundlePolicy:       webrtc.BundlePolicyMaxBundle,
+		BundlePolicy:       webrtc.BundlePolicyBalanced,
 		RTCPMuxPolicy:      webrtc.RTCPMuxPolicyRequire,
 	}
 }

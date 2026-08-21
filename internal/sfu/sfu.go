@@ -220,7 +220,9 @@ func getRTCConfiguration() webrtc.Configuration {
 		{
 			URLs: []string{
 				"stun:stun.l.google.com:19302",
+				"stun:stun1.l.google.com:19302",
 				"stun:stun.cloudflare.com:3478",
+				"stun:global.stun.twilio.com:3478",
 			},
 		},
 	}
@@ -254,6 +256,8 @@ func getRTCConfiguration() webrtc.Configuration {
 				"turn:openrelay.metered.ca:80",
 				"turn:openrelay.metered.ca:443",
 				"turn:openrelay.metered.ca:443?transport=tcp",
+				"turns:openrelay.metered.ca:443?transport=tcp",
+				"turns:openrelay.metered.ca:5349?transport=tcp",
 			},
 			Username:       "openrelayproject",
 			Credential:     "openrelayproject",
@@ -307,7 +311,7 @@ func NewSFUManager() (*SFUManager, error) {
 		}
 	}
 
-	se.SetICETimeouts(3*time.Second, 6*time.Second, 12*time.Second)
+	se.SetICETimeouts(10*time.Second, 30*time.Second, 2*time.Second)
 
 	api := webrtc.NewAPI(
 		webrtc.WithMediaEngine(m),

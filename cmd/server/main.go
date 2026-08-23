@@ -22,9 +22,11 @@ import (
 
 	"example/hello/internal/api/room"
 	"example/hello/internal/api/user"
+	"example/hello/internal/messaging"
 	"example/hello/internal/repository"
 	"example/hello/internal/service"
 	"example/hello/internal/sfu"
+	"example/hello/pkg/rabbitmq"
 )
 
 var upgrader = websocket.Upgrader{
@@ -173,6 +175,52 @@ func newRouter() *gin.Engine {
 
 	livekitService := service.NewLiveKitService()
 	callHandler := room.NewCallHandler(livekitService)
+
+	// RPC Client (Requestor in EIP Request-Reply Pattern)
+	var rpcClient *messaging.RPCClient
+	rmq, err := rabbitmq.Connect()
+	if err != nil {
+		log.Printf("RabbitMQ connection warning (running without message broker): %v", err)
+	} else {
+		client, err := messaging.NewRPCClient(rmq)
+		if err != nil {
+			log.Printf("Failed to initialize RPC Client: %v", err)
+		} else {
+			rpcClient = client
+			log.Println("RPC Client successfully initialized for Request-Reply communication")
+		}
+	}
+
+	// RPC Trigger Route
+	r.POST("/api/rpc/call", func(c *gin.Context) {
+		if rpcClient == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error": "RPC worker communication unavailable (RabbitMQ broker not connected)",
+			})
+			return
+		}
+
+		var payload struct {
+			Action string `json:"action" binding:"required"`
+			Params any    `json:"params,omitempty"`
+		}
+		if err := c.ShouldBindJSON(&payload); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		var result any
+		if err := rpcClient.Call(c.Request.Context(), payload.Action, payload.Params, &result); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status": "ok",
+			"action": payload.Action,
+			"result": result,
+		})
+	})
 
 	// Room API
 	r.GET("/api/rooms/:id/call-token", callHandler.GetJoinToken)

@@ -137,6 +137,41 @@ func (r *RabbitMQ) PublishJSON(ctx context.Context, exchange, routingKey string,
 	return r.Publish(ctx, exchange, routingKey, body)
 }
 
+// SetQos configures quality of service / prefetch count on the channel
+func (r *RabbitMQ) SetQos(prefetchCount, prefetchSize int, global bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.channel == nil {
+		return fmt.Errorf("rabbitmq channel is nil")
+	}
+	return r.channel.Qos(prefetchCount, prefetchSize, global)
+}
+
+// PublishRPC publishes an AMQP message with explicit publishing parameters (CorrelationID, ReplyTo, etc.)
+func (r *RabbitMQ) PublishRPC(ctx context.Context, exchange, routingKey string, msg amqp.Publishing) error {
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+	}
+
+	if msg.Timestamp.IsZero() {
+		msg.Timestamp = time.Now()
+	}
+	if msg.ContentType == "" {
+		msg.ContentType = "application/json"
+	}
+
+	return r.channel.PublishWithContext(
+		ctx,
+		exchange,
+		routingKey,
+		false, // mandatory
+		false, // immediate
+		msg,
+	)
+}
+
 // Consume starts consuming messages from a queue
 func (r *RabbitMQ) Consume(queue, consumerTag string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error) {
 	return r.channel.Consume(

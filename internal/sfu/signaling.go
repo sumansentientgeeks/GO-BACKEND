@@ -1,6 +1,7 @@
 package sfu
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -11,7 +12,10 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
+
+	"example/hello/pkg/redis"
 )
+
 
 var wsUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
@@ -129,6 +133,14 @@ func HandleSFUWebSocket(manager *SFUManager) gin.HandlerFunc {
 			"is_hand_raised":    peer.IsHandRaised,
 		})
 
+		// Record user presence in Redis cluster
+		if redis.GlobalRedis != nil && redis.GlobalRedis.IsActive {
+			_ = redis.GlobalRedis.SetUserPresence(context.Background(), roomID, userID, map[string]interface{}{
+				"user_name": userName,
+				"role":      role,
+			}, 24*time.Hour)
+		}
+
 		// Notify existing peers that a new participant joined
 		room.BroadcastExcept(userID, Message{
 			Type:     "peer_joined",
@@ -157,6 +169,9 @@ func HandleSFUWebSocket(manager *SFUManager) gin.HandlerFunc {
 		}
 
 		defer func() {
+			if redis.GlobalRedis != nil && redis.GlobalRedis.IsActive {
+				_ = redis.GlobalRedis.RemoveUserPresence(context.Background(), roomID, userID)
+			}
 			manager.RemovePeer(roomID, userID)
 			room.BroadcastAll(Message{
 				Type:     "peer_left",
@@ -165,6 +180,7 @@ func HandleSFUWebSocket(manager *SFUManager) gin.HandlerFunc {
 				UserName: userName,
 			})
 		}()
+
 
 		// Read loop for signaling messages
 		for {

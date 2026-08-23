@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	_ "github.com/lib/pq"
 )
+
 
 // Connect establishes a connection to the PostgreSQL database
 func Connect() (*sql.DB, error) {
@@ -23,10 +25,13 @@ func Connect() (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to open database connection: %w", err)
 	}
 
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("failed to ping database: %w", err)
-	}
+	// Configure production connection pool settings
+	db.SetMaxOpenConns(50)
+	db.SetMaxIdleConns(25)
+	db.SetConnMaxLifetime(15 * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
 
-	log.Println("Database connection established successfully")
+	log.Println("Database connection pool established successfully (MaxOpen: 50, MaxIdle: 25)")
 	return db, nil
 }
+

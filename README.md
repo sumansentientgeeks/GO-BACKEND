@@ -16,6 +16,10 @@ This is the backend service for the application, written in Go.
 2. Run `go mod download` to install dependencies.
 3. Run the application (e.g., using `go run cmd/<app>/main.go`).
 
+## Architecture & Scaling
+
+- 📖 **[1M+ Concurrent Users System Design & Discord-Quality Audio Architecture](file:///d:/GO/hello/backend/SYSTEM_DESIGN_1M_DISCORD_AUDIO.md)**: Comprehensive deep dive on scaling to 1M users, SFU clustering, Opus audio optimization, and distributed signaling.
+
 ## Build
 
 You can build the application using:
@@ -24,3 +28,4 @@ go build -o server.exe ./cmd/<app>
 ```
 
 Alternatively, you can build a Docker image using the provided `Dockerfile`.
+

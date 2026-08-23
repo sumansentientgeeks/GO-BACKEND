@@ -19,6 +19,7 @@ import (
 
 	"example/hello/pkg/config"
 	"example/hello/pkg/database"
+	"example/hello/pkg/redis"
 
 	"example/hello/internal/api/room"
 	"example/hello/internal/api/user"
@@ -28,6 +29,7 @@ import (
 	"example/hello/internal/sfu"
 	"example/hello/pkg/rabbitmq"
 )
+
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
@@ -145,11 +147,17 @@ func newRouter() *gin.Engine {
 	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
 	r.Use(cors.New(corsConfig))
 
+	// Initialize Redis Connection for Distributed Signaling & Presence
+	if _, err := redis.Connect(); err != nil {
+		log.Printf("Redis initialization warning (running in single-node mode): %v", err)
+	}
+
 	// Initialize WebRTC SFU Engine
 	sfuManager, err := sfu.NewSFUManager()
 	if err != nil {
 		log.Fatalf("Failed to initialize SFU MediaEngine: %v", err)
 	}
+
 
 	hub := newHub()
 

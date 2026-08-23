@@ -1,8 +1,10 @@
 package sfu
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -14,7 +16,11 @@ import (
 	"github.com/pion/interceptor"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
+
+	"example/hello/pkg/redis"
 )
+
+var ServerNodeID = "node_" + strconv.FormatInt(time.Now().UnixNano(), 36)
 
 // Message is the standard signaling payload exchanged over WebSocket.
 type Message struct {
@@ -30,7 +36,9 @@ type Message struct {
 	Text      string          `json:"text,omitempty"`
 	TrackID   string          `json:"track_id,omitempty"`
 	Kind      string          `json:"kind,omitempty"`
+	NodeID    string          `json:"node_id,omitempty"`
 }
+
 
 // SDPPayload explicitly maps the WebRTC session description.
 type SDPPayload struct {
@@ -187,8 +195,10 @@ type SFURoom struct {
 	Peers       map[string]*Peer
 	Tracks      map[string]*webrtc.TrackLocalStaticRTP // trackID -> *TrackLocalStaticRTP
 	TrackOwners map[string]string                      // trackID -> peerID
+	cancelSub   context.CancelFunc
 	mu          sync.RWMutex
 }
+
 
 // SFUManager manages multiple rooms and WebRTC media engine settings.
 type SFUManager struct {
@@ -273,10 +283,88 @@ func getRTCConfiguration() webrtc.Configuration {
 	}
 }
 
+// buildMediaEngine constructs a WebRTC MediaEngine configured with Discord-grade Opus audio fidelity and video codecs.
+func buildMediaEngine() (*webrtc.MediaEngine, error) {
+	m := &webrtc.MediaEngine{}
+
+	// 1. High-Fidelity Discord-Grade Opus Audio Codec Configuration
+	// Full-band 48kHz, Stereo, In-band FEC (Forward Error Correction), DTX (Discontinuous Transmission), 128kbps max bitrate
+	opusCodec := webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{
+			MimeType:     webrtc.MimeTypeOpus,
+			ClockRate:    48000,
+			Channels:     2,
+			SDPFmtpLine:  "minptime=10;useinbandfec=1;usedtx=1;maxaveragebitrate=128000;stereo=1;sprop-stereo=1;cbr=0",
+			RTCPFeedback: []webrtc.RTCPFeedback{
+				{Type: "nack"},
+				{Type: "transport-cc"},
+			},
+		},
+		PayloadType: 111,
+	}
+	if err := m.RegisterCodec(opusCodec, webrtc.RTPCodecTypeAudio); err != nil {
+		return nil, err
+	}
+
+	// 2. Video Codecs (VP8, H264, VP9) with feedback
+	videoCodecs := []webrtc.RTPCodecParameters{
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:    webrtc.MimeTypeVP8,
+				ClockRate:   90000,
+				RTCPFeedback: []webrtc.RTCPFeedback{
+					{Type: "goog-remb"},
+					{Type: "ccm", Parameter: "fir"},
+					{Type: "nack"},
+					{Type: "nack", Parameter: "pli"},
+					{Type: "transport-cc"},
+				},
+			},
+			PayloadType: 96,
+		},
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:    webrtc.MimeTypeH264,
+				ClockRate:   90000,
+				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
+				RTCPFeedback: []webrtc.RTCPFeedback{
+					{Type: "goog-remb"},
+					{Type: "ccm", Parameter: "fir"},
+					{Type: "nack"},
+					{Type: "nack", Parameter: "pli"},
+					{Type: "transport-cc"},
+				},
+			},
+			PayloadType: 102,
+		},
+	}
+	for _, codec := range videoCodecs {
+		if err := m.RegisterCodec(codec, webrtc.RTPCodecTypeVideo); err != nil {
+			return nil, err
+		}
+	}
+
+	// 3. Register RFC 6464 Audio Level Header Extension (for Discord-like active speaker detection)
+	if err := m.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{
+		URI: "urn:ietf:params:rtp-hdrext:ssrc-audio-level",
+	}, webrtc.RTPCodecTypeAudio); err != nil {
+		log.Printf("[SFU] Warning: failed to register audio-level header extension: %v", err)
+	}
+
+	// 4. Register Transport-Wide Congestion Control Header Extension
+	if err := m.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{
+		URI: "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01",
+	}, webrtc.RTPCodecTypeVideo); err != nil {
+		log.Printf("[SFU] Warning: failed to register transport-cc header extension: %v", err)
+	}
+
+	return m, nil
+}
+
 // NewSFUManager initializes WebRTC media codecs, interceptors, setting engine, and SFU engine.
 func NewSFUManager() (*SFUManager, error) {
-	m := &webrtc.MediaEngine{}
-	if err := m.RegisterDefaultCodecs(); err != nil {
+	m, err := buildMediaEngine()
+	if err != nil {
 		return nil, err
 	}
 
@@ -284,6 +372,7 @@ func NewSFUManager() (*SFUManager, error) {
 	if err := webrtc.RegisterDefaultInterceptors(m, ir); err != nil {
 		return nil, err
 	}
+
 
 	se := webrtc.SettingEngine{}
 
@@ -351,13 +440,21 @@ func (s *SFUManager) GetOrCreateRoom(roomID string) *SFURoom {
 		return room
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	room := &SFURoom{
 		ID:          roomID,
 		Peers:       make(map[string]*Peer),
 		Tracks:      make(map[string]*webrtc.TrackLocalStaticRTP),
 		TrackOwners: make(map[string]string),
+		cancelSub:   cancel,
 	}
 	s.Rooms[roomID] = room
+
+	// Start Redis cluster pub/sub listener for cross-node signaling if Redis is active
+	if redis.GlobalRedis != nil && redis.GlobalRedis.IsActive {
+		go room.subscribeRedisSignals(ctx)
+	}
+
 	return room
 }
 
@@ -372,10 +469,14 @@ func (s *SFUManager) RemoveRoomIfEmpty(roomID string) {
 		room.mu.RUnlock()
 
 		if empty {
+			if room.cancelSub != nil {
+				room.cancelSub()
+			}
 			delete(s.Rooms, roomID)
 		}
 	}
 }
+
 
 // CreatePeer dispatches peer creation via high-concurrency worker pool.
 func (s *SFUManager) CreatePeer(roomID, userID, userName, role string, sendMsg func(Message) error) (*Peer, error) {
@@ -603,20 +704,40 @@ func (s *SFUManager) RemovePeer(roomID, userID string) {
 	s.RemoveRoomIfEmpty(roomID)
 }
 
-// BroadcastExcept sends a message to all peers in the room except the sender.
-func (room *SFURoom) BroadcastExcept(senderID string, msg Message) {
-	room.mu.RLock()
-	defer room.mu.RUnlock()
+// subscribeRedisSignals subscribes to Redis pub/sub channel for cross-node message routing
+func (room *SFURoom) subscribeRedisSignals(ctx context.Context) {
+	if redis.GlobalRedis == nil || !redis.GlobalRedis.IsActive {
+		return
+	}
+	channel := fmt.Sprintf("room:%s:signals", room.ID)
+	pubsub := redis.GlobalRedis.Subscribe(ctx, channel)
+	if pubsub == nil {
+		return
+	}
+	defer pubsub.Close()
 
-	for id, peer := range room.Peers {
-		if id != senderID && peer.SendMsg != nil {
-			_ = peer.SendMsg(msg)
+	ch := pubsub.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case rMsg, ok := <-ch:
+			if !ok {
+				return
+			}
+			var signalMsg Message
+			if err := json.Unmarshal([]byte(rMsg.Payload), &signalMsg); err == nil {
+				// Only forward signals generated by other server nodes in cluster
+				if signalMsg.NodeID != ServerNodeID {
+					room.BroadcastLocalAll(signalMsg)
+				}
+			}
 		}
 	}
 }
 
-// BroadcastAll sends a message to all peers in the room.
-func (room *SFURoom) BroadcastAll(msg Message) {
+// BroadcastLocalAll sends a message directly to all local peers in the room without republishing to Redis.
+func (room *SFURoom) BroadcastLocalAll(msg Message) {
 	room.mu.RLock()
 	defer room.mu.RUnlock()
 
@@ -626,6 +747,51 @@ func (room *SFURoom) BroadcastAll(msg Message) {
 		}
 	}
 }
+
+// BroadcastExcept sends a message to all peers in the room except the sender, and publishes to Redis cluster.
+func (room *SFURoom) BroadcastExcept(senderID string, msg Message) {
+	msg.NodeID = ServerNodeID
+
+	// 1. Send to local connected peers
+	room.mu.RLock()
+	for id, peer := range room.Peers {
+		if id != senderID && peer.SendMsg != nil {
+			_ = peer.SendMsg(msg)
+		}
+	}
+	room.mu.RUnlock()
+
+	// 2. Publish to Redis cluster for remote peers on other nodes
+	if redis.GlobalRedis != nil && redis.GlobalRedis.IsActive {
+		go func() {
+			channel := fmt.Sprintf("room:%s:signals", room.ID)
+			_ = redis.GlobalRedis.Publish(context.Background(), channel, msg)
+		}()
+	}
+}
+
+// BroadcastAll sends a message to all peers in the room, and publishes to Redis cluster.
+func (room *SFURoom) BroadcastAll(msg Message) {
+	msg.NodeID = ServerNodeID
+
+	// 1. Send to local connected peers
+	room.mu.RLock()
+	for _, peer := range room.Peers {
+		if peer.SendMsg != nil {
+			_ = peer.SendMsg(msg)
+		}
+	}
+	room.mu.RUnlock()
+
+	// 2. Publish to Redis cluster for remote peers on other nodes
+	if redis.GlobalRedis != nil && redis.GlobalRedis.IsActive {
+		go func() {
+			channel := fmt.Sprintf("room:%s:signals", room.ID)
+			_ = redis.GlobalRedis.Publish(context.Background(), channel, msg)
+		}()
+	}
+}
+
 
 // GetParticipants returns full participant info for all active peers in the room.
 func (room *SFURoom) GetParticipants() []ParticipantInfo {

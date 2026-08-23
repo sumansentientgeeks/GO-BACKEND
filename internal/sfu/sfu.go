@@ -469,15 +469,15 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 		}
 		room.mu.Unlock()
 
-		// Request periodic PLI keyframes for video tracks so subscribers render cleanly
+		// Request periodic PLI keyframes for video tracks so subscribers render cleanly and immediately
 		if remoteTrack.Kind() == webrtc.RTPCodecTypeVideo {
-			// Trigger immediate PLI
+			// Trigger immediate initial PLI keyframe request
 			_ = pc.WriteRTCP([]rtcp.Packet{
 				&rtcp.PictureLossIndication{MediaSSRC: uint32(remoteTrack.SSRC())},
 			})
 
 			go func() {
-				ticker := time.NewTicker(2 * time.Second)
+				ticker := time.NewTicker(1 * time.Second)
 				defer ticker.Stop()
 				for range ticker.C {
 					if pc.ConnectionState() == webrtc.PeerConnectionStateClosed {

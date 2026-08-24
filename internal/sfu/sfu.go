@@ -229,15 +229,25 @@ func getRTCConfiguration() webrtc.Configuration {
 	iceServers := []webrtc.ICEServer{
 		{
 			URLs: []string{
+				"stun:stun.relay.metered.ca:80",
 				"stun:stun.l.google.com:19302",
 				"stun:stun1.l.google.com:19302",
-				"stun:stun.cloudflare.com:3478",
-				"stun:global.stun.twilio.com:3478",
 			},
+		},
+		{
+			URLs: []string{
+				"turn:global.relay.metered.ca:80",
+				"turn:global.relay.metered.ca:80?transport=tcp",
+				"turn:global.relay.metered.ca:443",
+				"turns:global.relay.metered.ca:443?transport=tcp",
+			},
+			Username:       "c2f54cf5c8cc9ee0f72e4646",
+			Credential:     "STjH/RwnVWyb74XX",
+			CredentialType: webrtc.ICECredentialTypePassword,
 		},
 	}
 
-	// Support custom TURN server from environment variables
+	// Support custom override from environment variables if set
 	turnURL := os.Getenv("TURN_SERVER_URL")
 	if turnURL == "" {
 		turnURL = os.Getenv("TURN_URL")
@@ -248,31 +258,17 @@ func getRTCConfiguration() webrtc.Configuration {
 		turnCred = os.Getenv("TURN_PASSWORD")
 	}
 
-	if turnURL != "" {
+	if turnURL != "" && turnUser != "" && turnCred != "" {
 		urls := strings.Split(turnURL, ",")
 		for i := range urls {
 			urls[i] = strings.TrimSpace(urls[i])
 		}
-		iceServers = append(iceServers, webrtc.ICEServer{
+		iceServers = append([]webrtc.ICEServer{{
 			URLs:           urls,
 			Username:       turnUser,
 			Credential:     turnCred,
 			CredentialType: webrtc.ICECredentialTypePassword,
-		})
-	} else {
-		// Fallback open TURN servers matching frontend for reliable symmetric NAT traversal
-		iceServers = append(iceServers, webrtc.ICEServer{
-			URLs: []string{
-				"turn:openrelay.metered.ca:80",
-				"turn:openrelay.metered.ca:443",
-				"turn:openrelay.metered.ca:443?transport=tcp",
-				"turns:openrelay.metered.ca:443?transport=tcp",
-				"turns:openrelay.metered.ca:5349?transport=tcp",
-			},
-			Username:       "openrelayproject",
-			Credential:     "openrelayproject",
-			CredentialType: webrtc.ICECredentialTypePassword,
-		})
+		}}, iceServers...)
 	}
 
 	return webrtc.Configuration{
@@ -348,7 +344,8 @@ func NewSFUManager() (*SFUManager, error) {
 		}
 	}
 
-	se.SetICETimeouts(10*time.Second, 30*time.Second, 2*time.Second)
+	// Lenient ICE timeouts for cloud environments with NAT and network latency
+	se.SetICETimeouts(25*time.Second, 50*time.Second, 3*time.Second)
 
 	api := webrtc.NewAPI(
 		webrtc.WithMediaEngine(m),

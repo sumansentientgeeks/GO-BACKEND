@@ -283,75 +283,23 @@ func getRTCConfiguration() webrtc.Configuration {
 	}
 }
 
-// buildMediaEngine constructs a WebRTC MediaEngine configured with Discord-grade Opus audio fidelity and video codecs.
+// buildMediaEngine constructs a WebRTC MediaEngine configured with universal Opus audio and video codecs.
 func buildMediaEngine() (*webrtc.MediaEngine, error) {
 	m := &webrtc.MediaEngine{}
 
-	// 1. High-Fidelity Discord-Grade Opus Audio Codec Configuration
-	// Full-band 48kHz, Stereo, In-band FEC (Forward Error Correction), DTX (Discontinuous Transmission), 128kbps max bitrate
-	opusCodec := webrtc.RTPCodecParameters{
-		RTPCodecCapability: webrtc.RTPCodecCapability{
-			MimeType:     webrtc.MimeTypeOpus,
-			ClockRate:    48000,
-			Channels:     2,
-			SDPFmtpLine:  "minptime=10;useinbandfec=1;usedtx=1;maxaveragebitrate=128000;stereo=1;sprop-stereo=1;cbr=0",
-			RTCPFeedback: []webrtc.RTCPFeedback{
-				{Type: "nack"},
-				{Type: "transport-cc"},
-			},
-		},
-		PayloadType: 111,
-	}
-	if err := m.RegisterCodec(opusCodec, webrtc.RTPCodecTypeAudio); err != nil {
+	// 1. Register default standard WebRTC codecs (Opus 48kHz stereo, VP8, H264, VP9, PCMU, PCMA)
+	if err := m.RegisterDefaultCodecs(); err != nil {
 		return nil, err
 	}
 
-	// 2. Video Codecs (VP8, H264, VP9) with feedback
-	videoCodecs := []webrtc.RTPCodecParameters{
-		{
-			RTPCodecCapability: webrtc.RTPCodecCapability{
-				MimeType:    webrtc.MimeTypeVP8,
-				ClockRate:   90000,
-				RTCPFeedback: []webrtc.RTCPFeedback{
-					{Type: "goog-remb"},
-					{Type: "ccm", Parameter: "fir"},
-					{Type: "nack"},
-					{Type: "nack", Parameter: "pli"},
-					{Type: "transport-cc"},
-				},
-			},
-			PayloadType: 96,
-		},
-		{
-			RTPCodecCapability: webrtc.RTPCodecCapability{
-				MimeType:    webrtc.MimeTypeH264,
-				ClockRate:   90000,
-				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
-				RTCPFeedback: []webrtc.RTCPFeedback{
-					{Type: "goog-remb"},
-					{Type: "ccm", Parameter: "fir"},
-					{Type: "nack"},
-					{Type: "nack", Parameter: "pli"},
-					{Type: "transport-cc"},
-				},
-			},
-			PayloadType: 102,
-		},
-	}
-	for _, codec := range videoCodecs {
-		if err := m.RegisterCodec(codec, webrtc.RTPCodecTypeVideo); err != nil {
-			return nil, err
-		}
-	}
-
-	// 3. Register RFC 6464 Audio Level Header Extension (for Discord-like active speaker detection)
+	// 2. Register RFC 6464 Audio Level Header Extension (for active speaker detection)
 	if err := m.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{
 		URI: "urn:ietf:params:rtp-hdrext:ssrc-audio-level",
 	}, webrtc.RTPCodecTypeAudio); err != nil {
 		log.Printf("[SFU] Warning: failed to register audio-level header extension: %v", err)
 	}
 
-	// 4. Register Transport-Wide Congestion Control Header Extension
+	// 3. Register Transport-Wide Congestion Control Header Extension
 	if err := m.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{
 		URI: "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01",
 	}, webrtc.RTPCodecTypeVideo); err != nil {

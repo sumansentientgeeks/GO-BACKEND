@@ -368,6 +368,22 @@ func HandleSFUWebSocket(manager *SFUManager) gin.HandlerFunc {
 				msg.UserName = userName
 				room.BroadcastAll(msg)
 
+			case "reaction":
+				msg.RoomID = roomID
+				msg.UserID = userID
+				msg.UserName = userName
+				room.BroadcastAll(msg)
+
+			case "ping":
+				_ = wsClient.WriteJSON(Message{
+					Type:   "pong",
+					RoomID: roomID,
+					UserID: userID,
+				})
+
+			case "pong":
+				// Heartbeat acknowledged
+
 			default:
 				log.Printf("[SFU WS] Unknown message type: %s", msg.Type)
 			}

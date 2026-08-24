@@ -224,23 +224,38 @@ type peerResult struct {
 	err  error
 }
 
+// sanitizeICEUrls filters and trims URLs to ensure only valid, well-formed stun/turn URLs are passed to Pion
+func sanitizeICEUrls(rawUrls []string) []string {
+	valid := make([]string, 0, len(rawUrls))
+	for _, u := range rawUrls {
+		trimmed := strings.TrimSpace(u)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "stun:") || strings.HasPrefix(trimmed, "turn:") || strings.HasPrefix(trimmed, "turns:") {
+			valid = append(valid, trimmed)
+		}
+	}
+	return valid
+}
+
 // getRTCConfiguration builds the WebRTC STUN & TURN config supporting cloud NAT environments.
 func getRTCConfiguration() webrtc.Configuration {
 	iceServers := []webrtc.ICEServer{
 		{
-			URLs: []string{
+			URLs: sanitizeICEUrls([]string{
 				"stun:stun.relay.metered.ca:80",
 				"stun:stun.l.google.com:19302",
 				"stun:stun1.l.google.com:19302",
-			},
+			}),
 		},
 		{
-			URLs: []string{
+			URLs: sanitizeICEUrls([]string{
 				"turn:global.relay.metered.ca:80",
 				"turn:global.relay.metered.ca:80?transport=tcp",
 				"turn:global.relay.metered.ca:443",
 				"turns:global.relay.metered.ca:443?transport=tcp",
-			},
+			}),
 			Username:       "c2f54cf5c8cc9ee0f72e4646",
 			Credential:     "STjH/RwnVWyb74XX",
 			CredentialType: webrtc.ICECredentialTypePassword,
@@ -259,16 +274,16 @@ func getRTCConfiguration() webrtc.Configuration {
 	}
 
 	if turnURL != "" && turnUser != "" && turnCred != "" {
-		urls := strings.Split(turnURL, ",")
-		for i := range urls {
-			urls[i] = strings.TrimSpace(urls[i])
+		rawList := strings.Split(turnURL, ",")
+		cleaned := sanitizeICEUrls(rawList)
+		if len(cleaned) > 0 {
+			iceServers = append([]webrtc.ICEServer{{
+				URLs:           cleaned,
+				Username:       strings.TrimSpace(turnUser),
+				Credential:     strings.TrimSpace(turnCred),
+				CredentialType: webrtc.ICECredentialTypePassword,
+			}}, iceServers...)
 		}
-		iceServers = append([]webrtc.ICEServer{{
-			URLs:           urls,
-			Username:       turnUser,
-			Credential:     turnCred,
-			CredentialType: webrtc.ICECredentialTypePassword,
-		}}, iceServers...)
 	}
 
 	return webrtc.Configuration{

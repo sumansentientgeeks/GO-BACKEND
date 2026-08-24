@@ -456,7 +456,36 @@ func (s *SFUManager) CreatePeer(roomID, userID, userName, role string, sendMsg f
 func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, sendMsg func(Message) error) (*Peer, error) {
 	pc, err := s.API.NewPeerConnection(s.RTCConfig)
 	if err != nil {
-		return nil, err
+		log.Printf("[SFU] Warning: NewPeerConnection with custom RTCConfig failed: %v, attempting verified fallback...", err)
+		fallbackConfig := webrtc.Configuration{
+			ICEServers: []webrtc.ICEServer{
+				{URLs: []string{"stun:stun.relay.metered.ca:80", "stun:stun.l.google.com:19302"}},
+				{
+					URLs: []string{
+						"turn:global.relay.metered.ca:80",
+						"turn:global.relay.metered.ca:443",
+					},
+					Username:       "c2f54cf5c8cc9ee0f72e4646",
+					Credential:     "STjH/RwnVWyb74XX",
+					CredentialType: webrtc.ICECredentialTypePassword,
+				},
+			},
+			BundlePolicy:  webrtc.BundlePolicyBalanced,
+			RTCPMuxPolicy: webrtc.RTCPMuxPolicyRequire,
+		}
+		pc, err = s.API.NewPeerConnection(fallbackConfig)
+		if err != nil {
+			log.Printf("[SFU] Warning: Fallback 1 failed: %v, trying basic STUN...", err)
+			basicConfig := webrtc.Configuration{
+				ICEServers: []webrtc.ICEServer{
+					{URLs: []string{"stun:stun.l.google.com:19302"}},
+				},
+			}
+			pc, err = s.API.NewPeerConnection(basicConfig)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	if role == "" {

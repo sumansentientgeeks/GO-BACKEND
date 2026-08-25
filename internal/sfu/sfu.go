@@ -241,33 +241,30 @@ func sanitizeICEUrls(rawUrls []string) []string {
 
 // getRTCConfiguration builds the WebRTC STUN & TURN config supporting cloud NAT environments.
 func getRTCConfiguration() webrtc.Configuration {
-	stunURL := os.Getenv("STUN_SERVER_URL")
-	if stunURL == "" {
-		stunURL = "stun:localhost:3478"
-	}
+	iceServers := []webrtc.ICEServer{}
+
+	// Support custom override from environment variables if set
 	turnURL := os.Getenv("TURN_SERVER_URL")
 	if turnURL == "" {
-		turnURL = "turn:localhost:3479"
+		turnURL = os.Getenv("TURN_URL")
 	}
 	turnUser := os.Getenv("TURN_USERNAME")
-	if turnUser == "" {
-		turnUser = "myuser"
-	}
 	turnCred := os.Getenv("TURN_CREDENTIAL")
 	if turnCred == "" {
-		turnCred = "mypassword"
+		turnCred = os.Getenv("TURN_PASSWORD")
 	}
 
-	iceServers := []webrtc.ICEServer{
-		{
-			URLs: sanitizeICEUrls([]string{stunURL}),
-		},
-		{
-			URLs:           sanitizeICEUrls(strings.Split(turnURL, ",")),
-			Username:       turnUser,
-			Credential:     turnCred,
-			CredentialType: webrtc.ICECredentialTypePassword,
-		},
+	if turnURL != "" && turnUser != "" && turnCred != "" {
+		rawList := strings.Split(turnURL, ",")
+		cleaned := sanitizeICEUrls(rawList)
+		if len(cleaned) > 0 {
+			iceServers = append([]webrtc.ICEServer{{
+				URLs:           cleaned,
+				Username:       strings.TrimSpace(turnUser),
+				Credential:     strings.TrimSpace(turnCred),
+				CredentialType: webrtc.ICECredentialTypePassword,
+			}}, iceServers...)
+		}
 	}
 
 
@@ -443,16 +440,29 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 	pc, err := s.API.NewPeerConnection(s.RTCConfig)
 	if err != nil {
 		log.Printf("[SFU] Warning: NewPeerConnection with custom RTCConfig failed: %v, attempting verified fallback...", err)
-		fallbackConfig := getRTCConfiguration()
-		fallbackConfig.BundlePolicy = webrtc.BundlePolicyBalanced
-		fallbackConfig.RTCPMuxPolicy = webrtc.RTCPMuxPolicyRequire
-
+		fallbackConfig := webrtc.Configuration{
+			ICEServers: []webrtc.ICEServer{
+				{URLs: []string{"stun:global.relay.metered.ca:80"}},
+				{
+					URLs: []string{
+						"turn:global.relay.metered.ca:80",
+						"turn:global.relay.metered.ca:80?transport=tcp",
+						"turn:global.relay.metered.ca:443",
+					},
+					Username:       "openrelayproject",
+					Credential:     "openrelayproject",
+					CredentialType: webrtc.ICECredentialTypePassword,
+				},
+			},
+			BundlePolicy:  webrtc.BundlePolicyBalanced,
+			RTCPMuxPolicy: webrtc.RTCPMuxPolicyRequire,
+		}
 		pc, err = s.API.NewPeerConnection(fallbackConfig)
 		if err != nil {
 			log.Printf("[SFU] Warning: Fallback 1 failed: %v, trying basic STUN...", err)
 			basicConfig := webrtc.Configuration{
 				ICEServers: []webrtc.ICEServer{
-					{URLs: []string{os.Getenv("STUN_SERVER_URL")}},
+					{URLs: []string{"stun:global.relay.metered.ca:80"}},
 				},
 			}
 			pc, err = s.API.NewPeerConnection(basicConfig)

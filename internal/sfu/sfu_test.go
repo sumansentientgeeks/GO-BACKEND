@@ -7,9 +7,9 @@ import (
 
 func TestCreatePeerWithEnv(t *testing.T) {
 	testCases := []string{
-		"turn:go-backend-rtwo.onrender.com:3479",
-		"stun:go-backend-rtwo.onrender.com:3478, turn:go-backend-rtwo.onrender.com:3479",
-		"turn:go-backend-rtwo.onrender.com:3479?transport=tcp",
+		"turn:global.relay.metered.ca:80, turn:global.relay.metered.ca:80?transport=tcp, turn:global.relay.metered.ca:443 , turns:global.relay.metered.ca:443?transport=tcp ",
+		"stun:global.relay.metered.ca:80, , turn:global.relay.metered.ca:443",
+		"turns:global.relay.metered.ca:443?transport=tcp",
 	}
 
 	for _, tc := range testCases {

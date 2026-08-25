@@ -7,15 +7,15 @@ import (
 
 func TestCreatePeerWithEnv(t *testing.T) {
 	testCases := []string{
-		"turn:global.relay.metered.ca:80, turn:global.relay.metered.ca:80?transport=tcp, turn:global.relay.metered.ca:443 , turns:global.relay.metered.ca:443?transport=tcp ",
-		"stun:stun.relay.metered.ca:80, , turn:global.relay.metered.ca:443",
-		"turns:global.relay.metered.ca:443?transport=tcp",
+		"turn:localhost:3478",
+		"stun:localhost:3478, turn:localhost:3478",
+		"turn:localhost:3478?transport=tcp",
 	}
 
 	for _, tc := range testCases {
 		os.Setenv("TURN_SERVER_URL", tc)
-		os.Setenv("TURN_USERNAME", "c2f54cf5c8cc9ee0f72e4646")
-		os.Setenv("TURN_CREDENTIAL", "STjH/RwnVWyb74XX")
+		os.Setenv("TURN_USERNAME", "myuser")
+		os.Setenv("TURN_CREDENTIAL", "mypassword")
 
 		mgr, err := NewSFUManager()
 		if err != nil {

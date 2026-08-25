@@ -244,20 +244,15 @@ func getRTCConfiguration() webrtc.Configuration {
 	iceServers := []webrtc.ICEServer{
 		{
 			URLs: sanitizeICEUrls([]string{
-				"stun:stun.relay.metered.ca:80",
-				"stun:stun.l.google.com:19302",
-				"stun:stun1.l.google.com:19302",
+				"stun:localhost:3478",
 			}),
 		},
 		{
 			URLs: sanitizeICEUrls([]string{
-				"turn:global.relay.metered.ca:80",
-				"turn:global.relay.metered.ca:80?transport=tcp",
-				"turn:global.relay.metered.ca:443",
-				"turns:global.relay.metered.ca:443?transport=tcp",
+				"turn:localhost:3478",
 			}),
-			Username:       "c2f54cf5c8cc9ee0f72e4646",
-			Credential:     "STjH/RwnVWyb74XX",
+			Username:       "myuser",
+			Credential:     "mypassword",
 			CredentialType: webrtc.ICECredentialTypePassword,
 		},
 	}
@@ -459,14 +454,13 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 		log.Printf("[SFU] Warning: NewPeerConnection with custom RTCConfig failed: %v, attempting verified fallback...", err)
 		fallbackConfig := webrtc.Configuration{
 			ICEServers: []webrtc.ICEServer{
-				{URLs: []string{"stun:stun.relay.metered.ca:80", "stun:stun.l.google.com:19302"}},
+				{URLs: []string{"stun:localhost:3478"}},
 				{
 					URLs: []string{
-						"turn:global.relay.metered.ca:80",
-						"turn:global.relay.metered.ca:443",
+						"turn:localhost:3478",
 					},
-					Username:       "c2f54cf5c8cc9ee0f72e4646",
-					Credential:     "STjH/RwnVWyb74XX",
+					Username:       "myuser",
+					Credential:     "mypassword",
 					CredentialType: webrtc.ICECredentialTypePassword,
 				},
 			},
@@ -478,7 +472,7 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 			log.Printf("[SFU] Warning: Fallback 1 failed: %v, trying basic STUN...", err)
 			basicConfig := webrtc.Configuration{
 				ICEServers: []webrtc.ICEServer{
-					{URLs: []string{"stun:stun.l.google.com:19302"}},
+					{URLs: []string{"stun:localhost:3478"}},
 				},
 			}
 			pc, err = s.API.NewPeerConnection(basicConfig)

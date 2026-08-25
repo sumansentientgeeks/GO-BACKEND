@@ -8,10 +8,12 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/joho/godotenv"
 	"github.com/pion/turn/v5"
 )
 
 func main() {
+	_ = godotenv.Load()
 	publicIP := os.Getenv("TURN_PUBLIC_IP")
 	if publicIP == "" {
 		publicIP = "127.0.0.1" // Default to localhost for development

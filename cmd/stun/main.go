@@ -5,10 +5,12 @@ import (
 	"net"
 	"os"
 
+	"github.com/joho/godotenv"
 	"github.com/pion/stun/v3"
 )
 
 func main() {
+	_ = godotenv.Load()
 	port := os.Getenv("STUN_PORT")
 	if port == "" {
 		port = "3478"

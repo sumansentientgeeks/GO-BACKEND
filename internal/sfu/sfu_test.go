@@ -7,9 +7,9 @@ import (
 
 func TestCreatePeerWithEnv(t *testing.T) {
 	testCases := []string{
-		"turn:localhost:3478",
-		"stun:localhost:3478, turn:localhost:3478",
-		"turn:localhost:3478?transport=tcp",
+		"turn:localhost:3479",
+		"stun:localhost:3478, turn:localhost:3479",
+		"turn:localhost:3479?transport=tcp",
 	}
 
 	for _, tc := range testCases {

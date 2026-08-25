@@ -249,7 +249,7 @@ func getRTCConfiguration() webrtc.Configuration {
 		},
 		{
 			URLs: sanitizeICEUrls([]string{
-				"turn:localhost:3478",
+				"turn:localhost:3479",
 			}),
 			Username:       "myuser",
 			Credential:     "mypassword",
@@ -457,7 +457,7 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 				{URLs: []string{"stun:localhost:3478"}},
 				{
 					URLs: []string{
-						"turn:localhost:3478",
+						"turn:localhost:3479",
 					},
 					Username:       "myuser",
 					Credential:     "mypassword",

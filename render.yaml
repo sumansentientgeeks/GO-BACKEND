@@ -29,7 +29,11 @@ services:
         sync: false
       # Local TURN Server (Replace localhost with your actual public domain/IP for production)
       - key: TURN_SERVER_URL
-        value: turn:localhost:3478
+        value: turn:localhost:3479
+      - key: STUN_PORT
+        value: 3478
+      - key: TURN_PORT
+        value: 3479
       - key: TURN_USERNAME
         value: myuser
       - key: TURN_CREDENTIAL

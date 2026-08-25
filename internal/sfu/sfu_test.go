@@ -7,9 +7,9 @@ import (
 
 func TestCreatePeerWithEnv(t *testing.T) {
 	testCases := []string{
-		"turn:localhost:3479",
-		"stun:localhost:3478, turn:localhost:3479",
-		"turn:localhost:3479?transport=tcp",
+		"turn:go-backend-rtwo.onrender.com:3479",
+		"stun:go-backend-rtwo.onrender.com:3478, turn:go-backend-rtwo.onrender.com:3479",
+		"turn:go-backend-rtwo.onrender.com:3479?transport=tcp",
 	}
 
 	for _, tc := range testCases {

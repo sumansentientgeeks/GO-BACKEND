@@ -1,22 +1,39 @@
 package main
 
 import (
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/joho/godotenv"
 	"github.com/pion/turn/v5"
 )
 
+func getPublicIP() string {
+	resp, err := http.Get("https://api.ipify.org")
+	if err != nil {
+		return "127.0.0.1"
+	}
+	defer resp.Body.Close()
+	ip, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "127.0.0.1"
+	}
+	return strings.TrimSpace(string(ip))
+}
+
 func main() {
 	_ = godotenv.Load()
 	publicIP := os.Getenv("TURN_PUBLIC_IP")
 	if publicIP == "" {
-		publicIP = "127.0.0.1" // Default to localhost for development
+		log.Println("TURN_PUBLIC_IP not set, attempting to automatically resolve public IP...")
+		publicIP = getPublicIP()
 	}
 
 	portStr := os.Getenv("TURN_PORT")

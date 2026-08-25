@@ -241,45 +241,36 @@ func sanitizeICEUrls(rawUrls []string) []string {
 
 // getRTCConfiguration builds the WebRTC STUN & TURN config supporting cloud NAT environments.
 func getRTCConfiguration() webrtc.Configuration {
+	stunURL := os.Getenv("STUN_SERVER_URL")
+	if stunURL == "" {
+		stunURL = "stun:localhost:3478"
+	}
+	turnURL := os.Getenv("TURN_SERVER_URL")
+	if turnURL == "" {
+		turnURL = "turn:localhost:3479"
+	}
+	turnUser := os.Getenv("TURN_USERNAME")
+	if turnUser == "" {
+		turnUser = "myuser"
+	}
+	turnCred := os.Getenv("TURN_CREDENTIAL")
+	if turnCred == "" {
+		turnCred = "mypassword"
+	}
+
 	iceServers := []webrtc.ICEServer{
 		{
-			URLs: sanitizeICEUrls([]string{
-				"stun:localhost:3478",
-			}),
+			URLs: sanitizeICEUrls([]string{stunURL}),
 		},
 		{
-			URLs: sanitizeICEUrls([]string{
-				"turn:localhost:3479",
-			}),
-			Username:       "myuser",
-			Credential:     "mypassword",
+			URLs:           sanitizeICEUrls(strings.Split(turnURL, ",")),
+			Username:       turnUser,
+			Credential:     turnCred,
 			CredentialType: webrtc.ICECredentialTypePassword,
 		},
 	}
 
-	// Support custom override from environment variables if set
-	turnURL := os.Getenv("TURN_SERVER_URL")
-	if turnURL == "" {
-		turnURL = os.Getenv("TURN_URL")
-	}
-	turnUser := os.Getenv("TURN_USERNAME")
-	turnCred := os.Getenv("TURN_CREDENTIAL")
-	if turnCred == "" {
-		turnCred = os.Getenv("TURN_PASSWORD")
-	}
 
-	if turnURL != "" && turnUser != "" && turnCred != "" {
-		rawList := strings.Split(turnURL, ",")
-		cleaned := sanitizeICEUrls(rawList)
-		if len(cleaned) > 0 {
-			iceServers = append([]webrtc.ICEServer{{
-				URLs:           cleaned,
-				Username:       strings.TrimSpace(turnUser),
-				Credential:     strings.TrimSpace(turnCred),
-				CredentialType: webrtc.ICECredentialTypePassword,
-			}}, iceServers...)
-		}
-	}
 
 	return webrtc.Configuration{
 		ICEServers:         iceServers,
@@ -452,27 +443,16 @@ func (s *SFUManager) createPeerInternal(roomID, userID, userName, role string, s
 	pc, err := s.API.NewPeerConnection(s.RTCConfig)
 	if err != nil {
 		log.Printf("[SFU] Warning: NewPeerConnection with custom RTCConfig failed: %v, attempting verified fallback...", err)
-		fallbackConfig := webrtc.Configuration{
-			ICEServers: []webrtc.ICEServer{
-				{URLs: []string{"stun:localhost:3478"}},
-				{
-					URLs: []string{
-						"turn:localhost:3479",
-					},
-					Username:       "myuser",
-					Credential:     "mypassword",
-					CredentialType: webrtc.ICECredentialTypePassword,
-				},
-			},
-			BundlePolicy:  webrtc.BundlePolicyBalanced,
-			RTCPMuxPolicy: webrtc.RTCPMuxPolicyRequire,
-		}
+		fallbackConfig := getRTCConfiguration()
+		fallbackConfig.BundlePolicy = webrtc.BundlePolicyBalanced
+		fallbackConfig.RTCPMuxPolicy = webrtc.RTCPMuxPolicyRequire
+
 		pc, err = s.API.NewPeerConnection(fallbackConfig)
 		if err != nil {
 			log.Printf("[SFU] Warning: Fallback 1 failed: %v, trying basic STUN...", err)
 			basicConfig := webrtc.Configuration{
 				ICEServers: []webrtc.ICEServer{
-					{URLs: []string{"stun:localhost:3478"}},
+					{URLs: []string{os.Getenv("STUN_SERVER_URL")}},
 				},
 			}
 			pc, err = s.API.NewPeerConnection(basicConfig)
